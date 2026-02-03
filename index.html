@@ -60,10 +60,15 @@
             color: #888;
         }
 
-        #canvas-container {
+        #canvas-wrapper {
             flex: 1;
             position: relative;
             overflow: hidden;
+        }
+
+        #canvas-container {
+            position: absolute;
+            inset: 0;
         }
 
         #drop-zone {
@@ -73,7 +78,7 @@
             align-items: center;
             justify-content: center;
             pointer-events: none;
-            z-index: 10;
+            z-index: 100;
         }
 
         #drop-zone.active {
@@ -113,6 +118,7 @@
             font-size: 12px;
             color: #888;
             line-height: 1.6;
+            z-index: 100;
         }
     </style>
 </head>
@@ -121,6 +127,12 @@
         <h1>Symmetries</h1>
         <div class="toolbar">
             <button id="add-btn">Add Image</button>
+            <button id="flip-h-btn" title="Flip Horizontal (H)">↔ Flip H</button>
+            <button id="flip-v-btn" title="Flip Vertical (V)">↕ Flip V</button>
+            <button id="rotate-l-btn" title="Rotate Left (L)">&circlearrowleft; Rot L</button>
+            <button id="rotate-r-btn" title="Rotate Right (R)">&circlearrowright; Rot R</button>
+            <button id="duplicate-btn" title="Duplicate (D)">⧉ Duplicate</button>
+            <button id="cutline-btn" title="Toggle Cut Line (C)">✂ Cut Line</button>
             <button id="reset-view-btn">Reset View</button>
         </div>
         <div class="zoom-info">
@@ -128,7 +140,8 @@
         </div>
     </header>
 
-    <div id="canvas-container">
+    <div id="canvas-wrapper">
+        <div id="canvas-container"></div>
         <div id="drop-zone" class="empty">
             <div class="drop-hint">
                 <div class="icon">+</div>
@@ -141,11 +154,13 @@
     <input type="file" id="file-input" accept="image/*" multiple>
 
     <div class="instructions">
-        Scroll to zoom | Drag canvas to pan | Click image to select | Drag corners to resize
+        Scroll to zoom | Drag canvas to pan | Click image to select | Drag corners to resize<br>
+        H/V: flip | L/R: rotate | D: duplicate | C: cut line | S: swap cut side | Arrows: nudge | Del: remove
     </div>
 
     <script src="https://unpkg.com/konva@9/konva.min.js"></script>
     <script>
+        const wrapper = document.getElementById('canvas-wrapper');
         const container = document.getElementById('canvas-container');
         const dropZone = document.getElementById('drop-zone');
         const fileInput = document.getElementById('file-input');
@@ -156,8 +171,8 @@
         // Initialize Konva stage
         const stage = new Konva.Stage({
             container: 'canvas-container',
-            width: container.clientWidth,
-            height: container.clientHeight,
+            width: wrapper.clientWidth,
+            height: wrapper.clientHeight,
             draggable: true
         });
 
@@ -194,10 +209,12 @@
 
                 const konvaImage = new Konva.Image({
                     image: img,
-                    x: stage.width() / 2 - (img.width * scale) / 2 + imageCount * 30,
-                    y: stage.height() / 2 - (img.height * scale) / 2 + imageCount * 30,
+                    x: stage.width() / 2 + imageCount * 30,
+                    y: stage.height() / 2 + imageCount * 30,
                     scaleX: scale,
                     scaleY: scale,
+                    offsetX: img.width / 2,
+                    offsetY: img.height / 2,
                     draggable: true,
                     name: fileName || `image-${imageCount}`
                 });
@@ -300,19 +317,273 @@
         addBtn.addEventListener('click', () => fileInput.click());
         fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
 
+        // Flip and rotate functions
+        function flipHorizontal() {
+            const nodes = transformer.nodes();
+            if (nodes.length === 0) return;
+            const node = nodes[0];
+            node.scaleX(node.scaleX() * -1);
+            imageLayer.batchDraw();
+        }
+
+        function flipVertical() {
+            const nodes = transformer.nodes();
+            if (nodes.length === 0) return;
+            const node = nodes[0];
+            node.scaleY(node.scaleY() * -1);
+            imageLayer.batchDraw();
+        }
+
+        function rotateLeft() {
+            const nodes = transformer.nodes();
+            if (nodes.length === 0) return;
+            const node = nodes[0];
+            node.rotation(node.rotation() - 90);
+            imageLayer.batchDraw();
+        }
+
+        function rotateRight() {
+            const nodes = transformer.nodes();
+            if (nodes.length === 0) return;
+            const node = nodes[0];
+            node.rotation(node.rotation() + 90);
+            imageLayer.batchDraw();
+        }
+
+        function duplicateImage() {
+            const nodes = transformer.nodes();
+            if (nodes.length === 0) return;
+            const node = nodes[0];
+
+            const clone = node.clone({
+                x: node.x() + 30,
+                y: node.y() + 30
+            });
+
+            // Copy stored original image data
+            clone.setAttr('originalImage', node.getAttr('originalImage'));
+            clone.setAttr('originalWidth', node.getAttr('originalWidth'));
+            clone.setAttr('originalHeight', node.getAttr('originalHeight'));
+
+            // Set up event handlers for the clone
+            clone.on('click tap', (e) => {
+                e.cancelBubble = true;
+                transformer.nodes([clone]);
+                imageLayer.batchDraw();
+            });
+
+            clone.on('dblclick dbltap', () => {
+                clone.moveToTop();
+                transformer.moveToTop();
+                imageLayer.batchDraw();
+            });
+
+            imageLayer.add(clone);
+            transformer.nodes([clone]);
+            transformer.moveToTop();
+            imageLayer.batchDraw();
+            imageCount++;
+        }
+
+        // Flip/rotate button handlers
+        document.getElementById('flip-h-btn').addEventListener('click', flipHorizontal);
+        document.getElementById('flip-v-btn').addEventListener('click', flipVertical);
+        document.getElementById('rotate-l-btn').addEventListener('click', rotateLeft);
+        document.getElementById('rotate-r-btn').addEventListener('click', rotateRight);
+        document.getElementById('duplicate-btn').addEventListener('click', duplicateImage);
+
+        // Cut line functionality
+        function toggleCutLine() {
+            const nodes = transformer.nodes();
+            if (nodes.length === 0) return;
+            const node = nodes[0];
+
+            // Check if this image already has a cut line
+            const existingLine = node.getAttr('cutLine');
+            if (existingLine) {
+                // Remove cut line - restore original image
+                removeCutLine(node);
+                return;
+            }
+
+            // Get image dimensions
+            const imgWidth = node.image().width;
+            const imgHeight = node.image().height;
+            const scale = Math.abs(node.scaleX());
+
+            // Store original position and dimensions
+            const centerX = node.x();
+            const centerY = node.y();
+            node.setAttr('originalImgWidth', imgWidth);
+            node.setAttr('originalCenterX', centerX);
+            node.setAttr('cropMode', 'right'); // 'right' = crop right edge, show left portion
+
+            // Create cut line
+            const lineHeight = imgHeight * scale * 1.2;
+            const cutLine = new Konva.Line({
+                points: [0, -lineHeight/2, 0, lineHeight/2],
+                stroke: '#ff4444',
+                strokeWidth: 4,
+                hitStrokeWidth: 20,
+                draggable: true
+            });
+
+            // Position line at center of image
+            cutLine.position({ x: centerX, y: centerY });
+            node.setAttr('cutLine', cutLine);
+            node.setAttr('cutLinePos', 0.5); // 0-1, position as fraction of image width
+
+            // Apply initial crop at center
+            applyCrop(node, 0.5);
+
+            // Update crop when line is dragged
+            cutLine.on('dragmove', () => {
+                updateCropFromLine(node, cutLine);
+            });
+
+            // Keep line with image when image moves
+            node.on('dragmove.cutline', () => {
+                updateLinePosition(node, cutLine);
+            });
+
+            imageLayer.add(cutLine);
+            cutLine.moveToTop();
+            imageLayer.batchDraw();
+        }
+
+        function removeCutLine(node) {
+            const cutLine = node.getAttr('cutLine');
+            if (cutLine) cutLine.destroy();
+            node.setAttr('cutLine', null);
+
+            const imgWidth = node.getAttr('originalImgWidth');
+            const imgHeight = node.image().height;
+            const centerX = node.getAttr('originalCenterX');
+
+            node.crop({ x: 0, y: 0, width: imgWidth, height: imgHeight });
+            node.width(imgWidth);
+            node.offsetX(imgWidth / 2);
+            node.x(centerX);
+            node.off('dragmove.cutline');
+            imageLayer.batchDraw();
+        }
+
+        function swapCropSide() {
+            const nodes = transformer.nodes();
+            if (nodes.length === 0) return;
+            const node = nodes[0];
+
+            const cutLine = node.getAttr('cutLine');
+            if (!cutLine) return;
+
+            // Toggle crop mode
+            const currentMode = node.getAttr('cropMode');
+            const newMode = currentMode === 'right' ? 'left' : 'right';
+            node.setAttr('cropMode', newMode);
+
+            // Re-apply crop with current line position
+            const linePos = node.getAttr('cutLinePos');
+            applyCrop(node, linePos);
+        }
+
+        function applyCrop(node, linePos) {
+            const imgWidth = node.getAttr('originalImgWidth');
+            const imgHeight = node.image().height;
+            const scale = Math.abs(node.scaleX());
+            const mode = node.getAttr('cropMode');
+            const originalCenterX = node.getAttr('originalCenterX');
+
+            // linePos is 0-1, where the cut line is as fraction of image width
+            const linePixel = linePos * imgWidth;
+
+            let cropX, cropWidth, newOffsetX, newX;
+
+            if (mode === 'right') {
+                // Crop right edge: show left portion (0 to linePixel)
+                cropX = 0;
+                cropWidth = Math.max(10, linePixel);
+                newOffsetX = cropWidth / 2;
+                // Keep left edge fixed: leftEdge = originalCenterX - (imgWidth/2)*scale
+                const leftEdge = originalCenterX - (imgWidth / 2) * scale;
+                newX = leftEdge + newOffsetX * scale;
+            } else {
+                // Crop left edge: show right portion (linePixel to end)
+                cropX = linePixel;
+                cropWidth = Math.max(10, imgWidth - linePixel);
+                newOffsetX = cropWidth / 2;
+                // Keep right edge fixed: rightEdge = originalCenterX + (imgWidth/2)*scale
+                const rightEdge = originalCenterX + (imgWidth / 2) * scale;
+                newX = rightEdge - newOffsetX * scale;
+            }
+
+            node.crop({ x: cropX, y: 0, width: cropWidth, height: imgHeight });
+            node.width(cropWidth);
+            node.offsetX(newOffsetX);
+            node.x(newX);
+            node.setAttr('cutLinePos', linePos);
+
+            updateLinePosition(node, node.getAttr('cutLine'));
+            imageLayer.batchDraw();
+        }
+
+        function updateCropFromLine(node, cutLine) {
+            const imgWidth = node.getAttr('originalImgWidth');
+            const scale = Math.abs(node.scaleX());
+            const originalCenterX = node.getAttr('originalCenterX');
+
+            // Calculate line position as fraction of original image
+            const leftEdge = originalCenterX - (imgWidth / 2) * scale;
+            const lineX = cutLine.x();
+            const linePos = Math.max(0.02, Math.min(0.98, (lineX - leftEdge) / (imgWidth * scale)));
+
+            applyCrop(node, linePos);
+        }
+
+        function updateLinePosition(node, cutLine) {
+            if (!cutLine) return;
+            const imgWidth = node.getAttr('originalImgWidth');
+            const scale = Math.abs(node.scaleX());
+            const linePos = node.getAttr('cutLinePos');
+
+            // Calculate where line should be based on current node position and linePos
+            const leftEdge = node.x() - node.offsetX() * scale;
+            const mode = node.getAttr('cropMode');
+
+            let lineX;
+            if (mode === 'right') {
+                // Left edge is fixed, line is at linePos from original left edge
+                const origLeftEdge = node.getAttr('originalCenterX') - (imgWidth / 2) * scale;
+                const dx = leftEdge - origLeftEdge;
+                node.setAttr('originalCenterX', node.getAttr('originalCenterX') + dx);
+                lineX = leftEdge + linePos * imgWidth * scale;
+            } else {
+                // Right edge is fixed
+                const rightEdge = node.x() + node.offsetX() * scale;
+                const origRightEdge = node.getAttr('originalCenterX') + (imgWidth / 2) * scale;
+                const dx = rightEdge - origRightEdge;
+                node.setAttr('originalCenterX', node.getAttr('originalCenterX') + dx);
+                lineX = rightEdge - (1 - linePos) * imgWidth * scale;
+            }
+
+            cutLine.x(lineX);
+            cutLine.y(node.y());
+        }
+
+        document.getElementById('cutline-btn').addEventListener('click', toggleCutLine);
+
         // Drag and drop
-        container.addEventListener('dragover', (e) => {
+        wrapper.addEventListener('dragover', (e) => {
             e.preventDefault();
             dropZone.classList.add('active');
         });
 
-        container.addEventListener('dragleave', (e) => {
-            if (!container.contains(e.relatedTarget)) {
+        wrapper.addEventListener('dragleave', (e) => {
+            if (!wrapper.contains(e.relatedTarget)) {
                 dropZone.classList.remove('active');
             }
         });
 
-        container.addEventListener('drop', (e) => {
+        wrapper.addEventListener('drop', (e) => {
             e.preventDefault();
             dropZone.classList.remove('active');
             handleFiles(e.dataTransfer.files);
@@ -320,8 +591,8 @@
 
         // Resize handling
         window.addEventListener('resize', () => {
-            stage.width(container.clientWidth);
-            stage.height(container.clientHeight);
+            stage.width(wrapper.clientWidth);
+            stage.height(wrapper.clientHeight);
             stage.batchDraw();
         });
 
@@ -351,6 +622,34 @@
                     node.destroy();
                     transformer.nodes([]);
                     updateDropZoneVisibility();
+                    break;
+                case 'h':
+                case 'H':
+                    flipHorizontal();
+                    break;
+                case 'v':
+                case 'V':
+                    flipVertical();
+                    break;
+                case 'l':
+                case 'L':
+                    rotateLeft();
+                    break;
+                case 'r':
+                case 'R':
+                    rotateRight();
+                    break;
+                case 'd':
+                case 'D':
+                    duplicateImage();
+                    break;
+                case 'c':
+                case 'C':
+                    toggleCutLine();
+                    break;
+                case 's':
+                case 'S':
+                    swapCropSide();
                     break;
                 default:
                     return;
