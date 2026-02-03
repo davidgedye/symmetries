@@ -150,6 +150,39 @@
             font-size: 12px;
             margin-left: 16px;
         }
+
+        .context-menu-separator {
+            height: 1px;
+            background: #4a4a4a;
+            margin: 4px 0;
+        }
+
+        .context-menu-label {
+            padding: 6px 16px;
+            font-size: 12px;
+            color: #888;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .context-menu-item.blend-option {
+            padding-left: 24px;
+            font-size: 13px;
+        }
+
+        .context-menu-item.blend-option.active {
+            color: #4285f4;
+        }
+
+        .context-menu-item.blend-option.active::before {
+            content: '✓';
+            position: absolute;
+            left: 8px;
+        }
+
+        .context-menu-item.blend-option {
+            position: relative;
+        }
     </style>
 </head>
 <body>
@@ -186,7 +219,7 @@
 
     <div class="instructions">
         Scroll to zoom | Drag canvas to pan | Click image to select | Drag corners to resize<br>
-        H/V: flip | L/R: rotate | D: duplicate | T: to top | S: save | Arrows: nudge | Del: remove | Right-click: menu
+        H/V: flip | L/R: rotate | D: duplicate | T: to top | B: blend | S: save | Arrows: nudge | Del: remove
     </div>
 
     <script src="https://unpkg.com/konva@9/konva.min.js"></script>
@@ -258,6 +291,9 @@
 
                 // Initialize crop bounds (non-destructive)
                 konvaImage.setAttr('cropBounds', { top: 0, right: 0, bottom: 0, left: 0 });
+
+                // Initialize blend mode
+                konvaImage.setAttr('blendMode', 'source-over');
 
                 // Click to select
                 konvaImage.on('click tap', (e) => {
@@ -430,6 +466,8 @@
             clone.setAttr('originalWidth', node.getAttr('originalWidth'));
             clone.setAttr('originalHeight', node.getAttr('originalHeight'));
             clone.setAttr('cropBounds', { ...node.getAttr('cropBounds') });
+            clone.setAttr('blendMode', node.getAttr('blendMode'));
+            clone.globalCompositeOperation(node.getAttr('blendMode') || 'source-over');
 
             // Set up event handlers for the clone
             clone.on('click tap', (e) => {
@@ -486,6 +524,40 @@
         }
 
         document.getElementById('totop-btn').addEventListener('click', bringToTop);
+
+        // Blend modes for double-exposure effects
+        const blendModes = [
+            { value: 'source-over', label: 'Normal' },
+            { value: 'screen', label: 'Screen' },
+            { value: 'multiply', label: 'Multiply' },
+            { value: 'lighten', label: 'Lighten' },
+            { value: 'darken', label: 'Darken' },
+            { value: 'overlay', label: 'Overlay' },
+            { value: 'soft-light', label: 'Soft Light' },
+            { value: 'difference', label: 'Difference' }
+        ];
+
+        function setBlendMode(mode) {
+            const nodes = transformer.nodes();
+            if (nodes.length === 0) return;
+            const node = nodes[0];
+            node.setAttr('blendMode', mode);
+            node.globalCompositeOperation(mode);
+            imageLayer.batchDraw();
+        }
+
+        function cycleBlendMode() {
+            const nodes = transformer.nodes();
+            if (nodes.length === 0) return;
+            const node = nodes[0];
+            const currentMode = node.getAttr('blendMode') || 'source-over';
+            const currentIndex = blendModes.findIndex(m => m.value === currentMode);
+            const nextIndex = (currentIndex + 1) % blendModes.length;
+            const nextMode = blendModes[nextIndex];
+            setBlendMode(nextMode.value);
+            // Brief visual feedback - could add a toast here
+            console.log('Blend mode:', nextMode.label);
+        }
 
         // Crop handles management
         let cropHandles = [];
@@ -850,12 +922,22 @@
 
             contextMenu = document.createElement('div');
             contextMenu.className = 'context-menu';
+
+            const currentBlend = node.getAttr('blendMode') || 'source-over';
+            const blendMenuItems = blendModes.map(m =>
+                `<div class="context-menu-item blend-option${m.value === currentBlend ? ' active' : ''}" data-action="blend" data-blend="${m.value}">${m.label}</div>`
+            ).join('');
+
             contextMenu.innerHTML = `
                 <div class="context-menu-item" data-action="totop">Bring to Top <span class="shortcut">T</span></div>
                 <div class="context-menu-item" data-action="duplicate">Duplicate <span class="shortcut">D</span></div>
                 <div class="context-menu-item" data-action="fliph">Flip Horizontal <span class="shortcut">H</span></div>
                 <div class="context-menu-item" data-action="flipv">Flip Vertical <span class="shortcut">V</span></div>
                 <div class="context-menu-item" data-action="resetcrop">Reset Crop</div>
+                <div class="context-menu-separator"></div>
+                <div class="context-menu-label">Blend Mode <span class="shortcut">B</span></div>
+                ${blendMenuItems}
+                <div class="context-menu-separator"></div>
                 <div class="context-menu-item" data-action="delete">Delete <span class="shortcut">Del</span></div>
             `;
             contextMenu.style.left = x + 'px';
@@ -875,6 +957,10 @@
                     case 'fliph': flipHorizontal(); break;
                     case 'flipv': flipVertical(); break;
                     case 'resetcrop': resetCrop(); break;
+                    case 'blend':
+                        const blendValue = item.dataset.blend;
+                        setBlendMode(blendValue);
+                        break;
                     case 'delete':
                         node.destroy();
                         transformer.nodes([]);
@@ -958,6 +1044,7 @@
                 const scaleX = img.scaleX();
                 const scaleY = img.scaleY();
                 const rotation = img.rotation();
+                const blendMode = img.getAttr('blendMode') || 'source-over';
 
                 // Calculate position in export canvas
                 const imgRect = img.getClientRect();
@@ -965,6 +1052,7 @@
                 const exportY = (imgRect.y - minY) * resMultiplier + (imgRect.height * resMultiplier) / 2;
 
                 ctx.save();
+                ctx.globalCompositeOperation = blendMode;
                 ctx.translate(exportX, exportY);
                 ctx.rotate(rotation * Math.PI / 180);
                 ctx.scale(scaleX < 0 ? -1 : 1, scaleY < 0 ? -1 : 1);
@@ -1080,6 +1168,10 @@
                 case 't':
                 case 'T':
                     bringToTop();
+                    break;
+                case 'b':
+                case 'B':
+                    cycleBlendMode();
                     break;
                 default:
                     return;
