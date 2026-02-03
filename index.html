@@ -133,6 +133,7 @@
             <button id="rotate-r-btn" title="Rotate Right (R)">&circlearrowright; Rot R</button>
             <button id="duplicate-btn" title="Duplicate (D)">⧉ Duplicate</button>
             <button id="cutline-btn" title="Toggle Cut Line (C)">✂ Cut Line</button>
+            <button id="export-btn" title="Export (E)">⬇ Export</button>
             <button id="reset-view-btn">Reset View</button>
         </div>
         <div class="zoom-info">
@@ -155,7 +156,7 @@
 
     <div class="instructions">
         Scroll to zoom | Drag canvas to pan | Click image to select | Drag corners to resize<br>
-        H/V: flip | L/R: rotate | D: duplicate | C: cut line | S: swap cut side | Arrows: nudge | Del: remove
+        H/V: flip | L/R: rotate | D: duplicate | C: cut line | S: swap side | E: export | Arrows: nudge | Del: remove
     </div>
 
     <script src="https://unpkg.com/konva@9/konva.min.js"></script>
@@ -571,6 +572,92 @@
 
         document.getElementById('cutline-btn').addEventListener('click', toggleCutLine);
 
+        // Export functionality
+        function exportCanvas() {
+            // Get all images (exclude transformer)
+            const images = imageLayer.children.filter(child => child instanceof Konva.Image);
+            if (images.length === 0) {
+                alert('No images to export');
+                return;
+            }
+
+            // Calculate bounding box of all images at current scale
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            const viewScale = stage.scaleX(); // Current view zoom
+
+            images.forEach(img => {
+                const rect = img.getClientRect();
+                minX = Math.min(minX, rect.x);
+                minY = Math.min(minY, rect.y);
+                maxX = Math.max(maxX, rect.x + rect.width);
+                maxY = Math.max(maxY, rect.y + rect.height);
+            });
+
+            // Calculate export dimensions (at full resolution)
+            // We need to figure out the scale factor from view to full res
+            // Use the first image to determine the resolution multiplier
+            const firstImg = images[0];
+            const imgScale = Math.abs(firstImg.scaleX());
+            const resMultiplier = 1 / imgScale; // How much bigger full res is vs display
+
+            const exportWidth = Math.round((maxX - minX) * resMultiplier);
+            const exportHeight = Math.round((maxY - minY) * resMultiplier);
+
+            // Create offscreen canvas
+            const exportCanvas = document.createElement('canvas');
+            exportCanvas.width = exportWidth;
+            exportCanvas.height = exportHeight;
+            const ctx = exportCanvas.getContext('2d');
+
+            // Fill with white background
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, exportWidth, exportHeight);
+
+            // Sort images by z-index
+            const sortedImages = [...images].sort((a, b) => a.zIndex() - b.zIndex());
+
+            // Draw each image
+            sortedImages.forEach(img => {
+                const originalImg = img.getAttr('originalImage') || img.image();
+                const crop = img.crop();
+                const scaleX = img.scaleX();
+                const scaleY = img.scaleY();
+                const rotation = img.rotation();
+
+                // Calculate position in export canvas
+                const imgRect = img.getClientRect();
+                const exportX = (imgRect.x - minX) * resMultiplier + (imgRect.width * resMultiplier) / 2;
+                const exportY = (imgRect.y - minY) * resMultiplier + (imgRect.height * resMultiplier) / 2;
+
+                ctx.save();
+                ctx.translate(exportX, exportY);
+                ctx.rotate(rotation * Math.PI / 180);
+                ctx.scale(scaleX < 0 ? -1 : 1, scaleY < 0 ? -1 : 1);
+
+                // Draw with crop if present
+                const cropX = crop.x || 0;
+                const cropY = crop.y || 0;
+                const cropW = crop.width || originalImg.width;
+                const cropH = crop.height || originalImg.height;
+
+                ctx.drawImage(
+                    originalImg,
+                    cropX, cropY, cropW, cropH,
+                    -cropW / 2, -cropH / 2, cropW, cropH
+                );
+
+                ctx.restore();
+            });
+
+            // Download
+            const link = document.createElement('a');
+            link.download = 'symmetries-export.png';
+            link.href = exportCanvas.toDataURL('image/png');
+            link.click();
+        }
+
+        document.getElementById('export-btn').addEventListener('click', exportCanvas);
+
         // Drag and drop
         wrapper.addEventListener('dragover', (e) => {
             e.preventDefault();
@@ -650,6 +737,10 @@
                 case 's':
                 case 'S':
                     swapCropSide();
+                    break;
+                case 'e':
+                case 'E':
+                    exportCanvas();
                     break;
                 default:
                     return;
