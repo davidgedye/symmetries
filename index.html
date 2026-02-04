@@ -195,6 +195,45 @@
         .context-menu-item.blend-option {
             position: relative;
         }
+
+        .progress-modal {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            padding: 24px 32px;
+            border-radius: 8px;
+            z-index: 1000;
+            min-width: 300px;
+            text-align: center;
+        }
+
+        .progress-modal h3 {
+            margin: 0 0 16px 0;
+            font-size: 16px;
+            font-weight: 500;
+        }
+
+        .progress-bar-container {
+            background: #3a3a3a;
+            border-radius: 4px;
+            height: 8px;
+            overflow: hidden;
+            margin-bottom: 12px;
+        }
+
+        .progress-bar {
+            background: #4285f4;
+            height: 100%;
+            width: 0%;
+            transition: width 0.2s ease;
+        }
+
+        .progress-text {
+            font-size: 14px;
+            color: #888;
+        }
     </style>
 </head>
 <body>
@@ -202,13 +241,15 @@
         <h1>Montage</h1>
         <div class="toolbar">
             <button id="add-btn">Add Image</button>
-            <button id="save-btn" title="Save (S)">⬇ Save</button>
+            <button id="save-btn" title="Export JPG (S)">⬇ Export</button>
+            <button id="save-project-btn" title="Save Project (Ctrl+S)">💾 Save Project</button>
             <button id="flip-h-btn" title="Flip Horizontal (H)">↔ Flip H</button>
             <button id="flip-v-btn" title="Flip Vertical (V)">↕ Flip V</button>
             <button id="rotate-l-btn" title="Rotate Left (L)">&circlearrowleft; Rot L</button>
             <button id="rotate-r-btn" title="Rotate Right (R)">&circlearrowright; Rot R</button>
             <button id="duplicate-btn" title="Duplicate (D)">⧉ Duplicate</button>
             <button id="totop-btn" title="Bring to Top (T)">⬆ To Top</button>
+            <button id="tobottom-btn" title="Send to Bottom (G)">⬇ To Bottom</button>
             <button id="reset-view-btn">Reset View</button>
         </div>
         <div class="zoom-info">
@@ -221,21 +262,22 @@
         <div id="drop-zone" class="empty">
             <div class="drop-hint">
                 <div class="icon">+</div>
-                <p>Drop images here</p>
+                <p>Drop images or .montage files here</p>
                 <p>or click Add Image</p>
             </div>
         </div>
     </div>
 
-    <input type="file" id="file-input" accept="image/*,.heic,.heif" multiple>
+    <input type="file" id="file-input" accept="image/*,.heic,.heif,.montage" multiple>
 
     <div class="instructions">
         Scroll to zoom | Drag canvas to pan | Click image to select | Drag corners to resize<br>
-        H/V: flip | L/R: rotate | D: duplicate | T: to top | B: blend | S: save | Arrows: nudge | Del: remove
+        H/V: flip | L/R: rotate | D: duplicate | T/G: top/bottom | B: blend | S: export | Ctrl+S: save project | Del: remove
     </div>
 
     <script src="https://unpkg.com/konva@9/konva.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/heic-to@1/dist/iife/heic-to.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3/dist/jszip.min.js"></script>
     <script>
         const wrapper = document.getElementById('canvas-wrapper');
         const container = document.getElementById('canvas-container');
@@ -285,10 +327,14 @@
                     scale = maxDim / Math.max(img.width, img.height);
                 }
 
+                // Calculate viewport center in stage coordinates
+                const viewportCenterX = (stage.width() / 2 - stage.x()) / stage.scaleX();
+                const viewportCenterY = (stage.height() / 2 - stage.y()) / stage.scaleY();
+
                 const konvaImage = new Konva.Image({
                     image: img,
-                    x: stage.width() / 2 + imageCount * 30,
-                    y: stage.height() / 2 + imageCount * 30,
+                    x: viewportCenterX + imageCount * 30,
+                    y: viewportCenterY + imageCount * 30,
                     scaleX: scale,
                     scaleY: scale,
                     offsetX: img.width / 2,
@@ -395,7 +441,10 @@
         async function handleFiles(files) {
             for (const file of Array.from(files)) {
                 try {
-                    if (isHeicFile(file)) {
+                    if (isMontageFile(file)) {
+                        // Load project file
+                        await loadProject(file);
+                    } else if (isHeicFile(file)) {
                         // Show loading message and convert HEIC to data URL
                         showHeicLoading(file.name);
                         const dataUrl = await convertHeicToDataUrl(file);
@@ -413,6 +462,11 @@
                     alert(`Could not load ${file.name}: ${err.message}`);
                 }
             }
+        }
+
+        // Check if file is a .montage project file
+        function isMontageFile(file) {
+            return file.name.toLowerCase().endsWith('.montage');
         }
 
         // Update drop zone visibility
@@ -590,7 +644,19 @@
             imageLayer.batchDraw();
         }
 
+        // Send to bottom functionality
+        function sendToBottom() {
+            const nodes = transformer.nodes();
+            if (nodes.length === 0) return;
+            const node = nodes[0];
+            node.moveToBottom();
+            transformer.moveToTop();
+            updateCropHandles();
+            imageLayer.batchDraw();
+        }
+
         document.getElementById('totop-btn').addEventListener('click', bringToTop);
+        document.getElementById('tobottom-btn').addEventListener('click', sendToBottom);
 
         // Blend modes for double-exposure effects
         const blendModes = [
@@ -997,6 +1063,7 @@
 
             contextMenu.innerHTML = `
                 <div class="context-menu-item" data-action="totop">Bring to Top <span class="shortcut">T</span></div>
+                <div class="context-menu-item" data-action="tobottom">Send to Bottom <span class="shortcut">G</span></div>
                 <div class="context-menu-item" data-action="duplicate">Duplicate <span class="shortcut">D</span></div>
                 <div class="context-menu-item" data-action="fliph">Flip Horizontal <span class="shortcut">H</span></div>
                 <div class="context-menu-item" data-action="flipv">Flip Vertical <span class="shortcut">V</span></div>
@@ -1020,6 +1087,7 @@
 
                 switch (action) {
                     case 'totop': bringToTop(); break;
+                    case 'tobottom': sendToBottom(); break;
                     case 'duplicate': duplicateImage(); break;
                     case 'fliph': flipHorizontal(); break;
                     case 'flipv': flipVertical(); break;
@@ -1069,9 +1137,8 @@
                 return;
             }
 
-            // Calculate bounding box of all images at current scale
+            // Calculate bounding box of all images in screen coordinates
             let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-            const viewScale = stage.scaleX(); // Current view zoom
 
             images.forEach(img => {
                 const rect = img.getClientRect();
@@ -1081,15 +1148,10 @@
                 maxY = Math.max(maxY, rect.y + rect.height);
             });
 
-            // Calculate export dimensions (at full resolution)
-            // We need to figure out the scale factor from view to full res
-            // Use the first image to determine the resolution multiplier
-            const firstImg = images[0];
-            const imgScale = Math.abs(firstImg.scaleX());
-            const resMultiplier = 1 / imgScale; // How much bigger full res is vs display
-
-            const exportWidth = Math.round((maxX - minX) * resMultiplier);
-            const exportHeight = Math.round((maxY - minY) * resMultiplier);
+            // Export at 2x screen resolution for good quality
+            const exportScale = 2;
+            const exportWidth = Math.round((maxX - minX) * exportScale);
+            const exportHeight = Math.round((maxY - minY) * exportScale);
 
             // Create offscreen canvas
             const exportCanvas = document.createElement('canvas');
@@ -1104,19 +1166,36 @@
             // Sort images by z-index
             const sortedImages = [...images].sort((a, b) => a.zIndex() - b.zIndex());
 
+            // Get current stage zoom for coordinate conversion
+            const stageZoom = stage.scaleX();
+
             // Draw each image
             sortedImages.forEach(img => {
                 const originalImg = img.getAttr('originalImage') || img.image();
                 const crop = img.crop();
                 const scaleX = img.scaleX();
                 const scaleY = img.scaleY();
+                const absScaleX = Math.abs(scaleX);
+                const absScaleY = Math.abs(scaleY);
                 const rotation = img.rotation();
                 const blendMode = img.getAttr('blendMode') || 'source-over';
 
-                // Calculate position in export canvas
+                // Get crop dimensions (the source rectangle from the original image)
+                const cropX = crop.x || 0;
+                const cropY = crop.y || 0;
+                const cropW = crop.width || originalImg.width;
+                const cropH = crop.height || originalImg.height;
+
+                // Get the bounding box center in screen coordinates
                 const imgRect = img.getClientRect();
-                const exportX = (imgRect.x - minX) * resMultiplier + (imgRect.width * resMultiplier) / 2;
-                const exportY = (imgRect.y - minY) * resMultiplier + (imgRect.height * resMultiplier) / 2;
+                const centerX = imgRect.x + imgRect.width / 2;
+                const centerY = imgRect.y + imgRect.height / 2;
+                const exportX = (centerX - minX) * exportScale;
+                const exportY = (centerY - minY) * exportScale;
+
+                // Displayed size = crop size * image scale * stage zoom * export scale
+                const drawWidth = cropW * absScaleX * stageZoom * exportScale;
+                const drawHeight = cropH * absScaleY * stageZoom * exportScale;
 
                 ctx.save();
                 ctx.globalCompositeOperation = blendMode;
@@ -1124,16 +1203,11 @@
                 ctx.rotate(rotation * Math.PI / 180);
                 ctx.scale(scaleX < 0 ? -1 : 1, scaleY < 0 ? -1 : 1);
 
-                // Draw with crop if present
-                const cropX = crop.x || 0;
-                const cropY = crop.y || 0;
-                const cropW = crop.width || originalImg.width;
-                const cropH = crop.height || originalImg.height;
-
+                // Draw the image
                 ctx.drawImage(
                     originalImg,
                     cropX, cropY, cropW, cropH,
-                    -cropW / 2, -cropH / 2, cropW, cropH
+                    -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight
                 );
 
                 ctx.restore();
@@ -1147,6 +1221,291 @@
         }
 
         document.getElementById('save-btn').addEventListener('click', exportCanvas);
+
+        // Progress modal functions
+        let progressModal = null;
+
+        function showProgressModal(title) {
+            hideProgressModal();
+            progressModal = document.createElement('div');
+            progressModal.className = 'progress-modal';
+            progressModal.innerHTML = `
+                <h3>${title}</h3>
+                <div class="progress-bar-container">
+                    <div class="progress-bar"></div>
+                </div>
+                <div class="progress-text">Preparing...</div>
+            `;
+            document.body.appendChild(progressModal);
+        }
+
+        function updateProgress(percent, text) {
+            if (!progressModal) return;
+            const bar = progressModal.querySelector('.progress-bar');
+            const textEl = progressModal.querySelector('.progress-text');
+            if (bar) bar.style.width = percent + '%';
+            if (textEl) textEl.textContent = text;
+        }
+
+        function hideProgressModal() {
+            if (progressModal) {
+                progressModal.remove();
+                progressModal = null;
+            }
+        }
+
+        // Save project as .montage file
+        async function saveProject() {
+            const images = imageLayer.children.filter(child => child instanceof Konva.Image);
+            if (images.length === 0) {
+                alert('No images to save');
+                return;
+            }
+
+            showProgressModal('Saving Project...');
+
+            try {
+                const zip = new JSZip();
+                const imgFolder = zip.folder('images');
+                const projectData = {
+                    version: 1,
+                    stagePosition: { x: stage.x(), y: stage.y() },
+                    stageScale: stage.scaleX(),
+                    images: []
+                };
+
+                // Sort images by z-index to preserve layer order
+                const sortedImages = [...images].sort((a, b) => a.zIndex() - b.zIndex());
+
+                for (let i = 0; i < sortedImages.length; i++) {
+                    const img = sortedImages[i];
+                    const originalImg = img.getAttr('originalImage') || img.image();
+                    const filename = `${i}.png`;
+
+                    updateProgress(
+                        Math.round((i / sortedImages.length) * 80),
+                        `Processing image ${i + 1} of ${sortedImages.length}...`
+                    );
+
+                    // Convert image to PNG blob
+                    const canvas = document.createElement('canvas');
+                    canvas.width = originalImg.width;
+                    canvas.height = originalImg.height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(originalImg, 0, 0);
+
+                    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+                    imgFolder.file(filename, blob);
+
+                    // Store image state
+                    projectData.images.push({
+                        filename: filename,
+                        x: img.x(),
+                        y: img.y(),
+                        scaleX: img.scaleX(),
+                        scaleY: img.scaleY(),
+                        rotation: img.rotation(),
+                        cropBounds: img.getAttr('cropBounds') || { top: 0, right: 0, bottom: 0, left: 0 },
+                        blendMode: img.getAttr('blendMode') || 'source-over',
+                        originalWidth: img.getAttr('originalWidth'),
+                        originalHeight: img.getAttr('originalHeight'),
+                        name: img.name()
+                    });
+                }
+
+                // Add project.json
+                zip.file('project.json', JSON.stringify(projectData, null, 2));
+
+                updateProgress(90, 'Creating archive...');
+
+                // Generate zip file
+                const content = await zip.generateAsync({
+                    type: 'blob',
+                    compression: 'DEFLATE',
+                    compressionOptions: { level: 6 }
+                }, (metadata) => {
+                    updateProgress(90 + Math.round(metadata.percent * 0.1), 'Creating archive...');
+                });
+
+                updateProgress(100, 'Done!');
+
+                // Download
+                const link = document.createElement('a');
+                link.download = 'project.montage';
+                link.href = URL.createObjectURL(content);
+                link.click();
+                URL.revokeObjectURL(link.href);
+
+                setTimeout(hideProgressModal, 500);
+
+            } catch (err) {
+                hideProgressModal();
+                console.error('Error saving project:', err);
+                alert('Failed to save project: ' + err.message);
+            }
+        }
+
+        // Load project from .montage file
+        async function loadProject(file) {
+            showProgressModal('Adding from Project...');
+
+            try {
+                updateProgress(10, 'Reading archive...');
+
+                const zip = await JSZip.loadAsync(file);
+                const projectFile = zip.file('project.json');
+
+                if (!projectFile) {
+                    throw new Error('Invalid .montage file: missing project.json');
+                }
+
+                const projectData = JSON.parse(await projectFile.async('string'));
+
+                updateProgress(20, 'Loading images...');
+
+                // Calculate offset to center loaded images in current viewport
+                // First, find the bounding box center of the saved images
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                for (const imgData of projectData.images) {
+                    minX = Math.min(minX, imgData.x);
+                    minY = Math.min(minY, imgData.y);
+                    maxX = Math.max(maxX, imgData.x);
+                    maxY = Math.max(maxY, imgData.y);
+                }
+                const savedCenterX = (minX + maxX) / 2;
+                const savedCenterY = (minY + maxY) / 2;
+
+                // Calculate viewport center in stage coordinates
+                const viewportCenterX = (stage.width() / 2 - stage.x()) / stage.scaleX();
+                const viewportCenterY = (stage.height() / 2 - stage.y()) / stage.scaleY();
+
+                // Offset to apply to each loaded image
+                const offsetX = viewportCenterX - savedCenterX;
+                const offsetY = viewportCenterY - savedCenterY;
+
+                // Load images (additive - keeps existing images)
+                const imgFolder = zip.folder('images');
+                const totalImages = projectData.images.length;
+
+                for (let i = 0; i < totalImages; i++) {
+                    const imgData = projectData.images[i];
+
+                    updateProgress(
+                        20 + Math.round((i / totalImages) * 75),
+                        `Loading image ${i + 1} of ${totalImages}...`
+                    );
+
+                    const imgFile = imgFolder.file(imgData.filename);
+                    if (!imgFile) {
+                        console.warn(`Missing image: ${imgData.filename}`);
+                        continue;
+                    }
+
+                    const imgBlob = await imgFile.async('blob');
+                    const imgUrl = URL.createObjectURL(imgBlob);
+
+                    await new Promise((resolve, reject) => {
+                        const img = new Image();
+                        img.onload = () => {
+                            const konvaImage = new Konva.Image({
+                                image: img,
+                                x: imgData.x + offsetX,
+                                y: imgData.y + offsetY,
+                                scaleX: imgData.scaleX,
+                                scaleY: imgData.scaleY,
+                                rotation: imgData.rotation,
+                                draggable: true,
+                                name: imgData.name || `image-${i}`
+                            });
+
+                            // Set original dimensions
+                            konvaImage.setAttr('originalImage', img);
+                            konvaImage.setAttr('originalWidth', imgData.originalWidth || img.width);
+                            konvaImage.setAttr('originalHeight', imgData.originalHeight || img.height);
+
+                            // Apply crop bounds
+                            const cropBounds = imgData.cropBounds || { top: 0, right: 0, bottom: 0, left: 0 };
+                            konvaImage.setAttr('cropBounds', cropBounds);
+
+                            const originalWidth = imgData.originalWidth || img.width;
+                            const originalHeight = imgData.originalHeight || img.height;
+                            const cropX = cropBounds.left;
+                            const cropY = cropBounds.top;
+                            const cropWidth = originalWidth - cropBounds.left - cropBounds.right;
+                            const cropHeight = originalHeight - cropBounds.top - cropBounds.bottom;
+
+                            if (cropWidth > 0 && cropHeight > 0) {
+                                konvaImage.crop({ x: cropX, y: cropY, width: cropWidth, height: cropHeight });
+                                konvaImage.width(cropWidth);
+                                konvaImage.height(cropHeight);
+                                konvaImage.offsetX(cropWidth / 2);
+                                konvaImage.offsetY(cropHeight / 2);
+                            } else {
+                                konvaImage.offsetX(img.width / 2);
+                                konvaImage.offsetY(img.height / 2);
+                            }
+
+                            // Apply blend mode
+                            const blendMode = imgData.blendMode || 'source-over';
+                            konvaImage.setAttr('blendMode', blendMode);
+                            konvaImage.globalCompositeOperation(blendMode);
+
+                            // Set up event handlers
+                            konvaImage.on('click tap', (e) => {
+                                e.cancelBubble = true;
+                                transformer.nodes([konvaImage]);
+                                updateCropHandles();
+                                imageLayer.batchDraw();
+                            });
+
+                            konvaImage.on('dblclick dbltap', () => {
+                                konvaImage.moveToTop();
+                                transformer.moveToTop();
+                                updateCropHandles();
+                                imageLayer.batchDraw();
+                            });
+
+                            konvaImage.on('contextmenu', (e) => {
+                                e.evt.preventDefault();
+                                e.cancelBubble = true;
+                                transformer.nodes([konvaImage]);
+                                updateCropHandles();
+                                showContextMenu(e.evt.clientX, e.evt.clientY, konvaImage);
+                                imageLayer.batchDraw();
+                            });
+
+                            konvaImage.on('dragmove', () => {
+                                updateCropHandles();
+                            });
+
+                            imageLayer.add(konvaImage);
+                            URL.revokeObjectURL(imgUrl);
+                            resolve();
+                        };
+                        img.onerror = () => {
+                            URL.revokeObjectURL(imgUrl);
+                            reject(new Error(`Failed to load image: ${imgData.filename}`));
+                        };
+                        img.src = imgUrl;
+                    });
+                }
+
+                transformer.moveToTop();
+                imageLayer.batchDraw();
+                updateDropZoneVisibility();
+                imageCount += totalImages;
+
+                updateProgress(100, 'Done!');
+                setTimeout(hideProgressModal, 500);
+
+            } catch (err) {
+                hideProgressModal();
+                console.error('Error loading project:', err);
+                alert('Failed to load project: ' + err.message);
+            }
+        }
+
+        document.getElementById('save-project-btn').addEventListener('click', saveProject);
 
         // Drag and drop
         wrapper.addEventListener('dragover', (e) => {
@@ -1175,10 +1534,15 @@
 
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => {
-            // Save works regardless of selection
-            if (e.key === 's' || e.key === 'S') {
-                exportCanvas();
+            // Ctrl+S saves project, S exports JPG
+            if ((e.key === 's' || e.key === 'S') && (e.ctrlKey || e.metaKey)) {
                 e.preventDefault();
+                saveProject();
+                return;
+            }
+            if (e.key === 's' || e.key === 'S') {
+                e.preventDefault();
+                exportCanvas();
                 return;
             }
 
@@ -1235,6 +1599,10 @@
                 case 't':
                 case 'T':
                     bringToTop();
+                    break;
+                case 'g':
+                case 'G':
+                    sendToBottom();
                     break;
                 case 'b':
                 case 'B':
