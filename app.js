@@ -5,6 +5,7 @@ const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('file-input');
 const addBtn = document.getElementById('add-btn');
 const resetViewBtn = document.getElementById('reset-view-btn');
+const bgToggleBtn = document.getElementById('bg-toggle-btn');
 const zoomLevelSpan = document.getElementById('zoom-level');
 
 // Initialize Konva stage
@@ -39,6 +40,8 @@ let cropHandles = [];
 let cropHandlesNodeId = null;
 let contextMenu = null;
 let progressModal = null;
+let opacityInput = { firstDigit: null, timeout: null };
+let opacityLabel = null;
 
 // Constants
 const HANDLE_SIZE = 12;
@@ -312,6 +315,7 @@ function deleteSelected() {
     node.destroy();
     transformer.nodes([]);
     removeCropHandles();
+    removeOpacityLabel();
     updateDropZoneVisibility();
     imageLayer.batchDraw();
 }
@@ -337,6 +341,49 @@ function cycleBlendMode() {
     const nextMode = blendModes[nextIndex];
     setBlendMode(nextMode.value);
     console.log('Blend mode:', nextMode.label);
+}
+
+// ============================================
+// Opacity (Photoshop-style number keys)
+// ============================================
+
+function setOpacity(percent) {
+    const node = getSelectedImage();
+    if (!node) return;
+    const opacity = Math.max(0, Math.min(100, percent)) / 100;
+    node.opacity(opacity);
+    updateOpacityLabel(node);
+    imageLayer.batchDraw();
+}
+
+function handleOpacityKey(digit) {
+    const node = getSelectedImage();
+    if (!node) return true; // consume the key even if no selection
+
+    if (opacityInput.timeout) {
+        clearTimeout(opacityInput.timeout);
+    }
+
+    if (opacityInput.firstDigit !== null) {
+        // Second digit - combine for precise value
+        const percent = opacityInput.firstDigit * 10 + digit;
+        setOpacity(percent);
+        opacityInput.firstDigit = null;
+        opacityInput.timeout = null;
+    } else {
+        // First digit - wait briefly for second digit
+        opacityInput.firstDigit = digit;
+        opacityInput.timeout = setTimeout(() => {
+            // No second digit came - use single digit value
+            // 0 = 100%, 1-9 = 10%-90%
+            const percent = opacityInput.firstDigit === 0 ? 100 : opacityInput.firstDigit * 10;
+            setOpacity(percent);
+            opacityInput.firstDigit = null;
+            opacityInput.timeout = null;
+        }, 300); // 300ms window for second digit
+    }
+
+    return true;
 }
 
 // ============================================
@@ -623,6 +670,7 @@ function updateCropHandles() {
     const node = getSelectedImage();
     if (!node) {
         removeCropHandles();
+        removeOpacityLabel();
         cropHandlesNodeId = null;
         return;
     }
@@ -632,6 +680,83 @@ function updateCropHandles() {
         cropHandlesNodeId = node._id;
     } else {
         positionCropHandles(node);
+    }
+
+    updateOpacityLabel(node);
+}
+
+// ============================================
+// Opacity Label
+// ============================================
+
+function updateOpacityLabel(node) {
+    const opacity = node.opacity();
+
+    // Only show if opacity is not 100%
+    if (opacity >= 0.999) {
+        removeOpacityLabel();
+        return;
+    }
+
+    const percent = Math.round(opacity * 100);
+    const rect = node.getClientRect({ relativeTo: stage });
+    const text = percent + '% opacity';
+
+    if (!opacityLabel) {
+        opacityLabel = new Konva.Text({
+            text: text,
+            fontSize: 12,
+            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+            fill: '#fff',
+            padding: 4,
+            listening: false
+        });
+
+        // Add background rect
+        const bg = new Konva.Rect({
+            fill: 'rgba(0, 0, 0, 0.7)',
+            cornerRadius: 3,
+            listening: false
+        });
+        bg.setAttr('isOpacityBg', true);
+        imageLayer.add(bg);
+        imageLayer.add(opacityLabel);
+    }
+
+    // Update text
+    opacityLabel.text(text);
+
+    // Get background rect
+    const bg = imageLayer.children.find(c => c.getAttr('isOpacityBg'));
+
+    // Size background to text
+    const padding = 4;
+    const textWidth = opacityLabel.width();
+    const textHeight = opacityLabel.height();
+
+    // Position at lower right corner of image
+    const labelX = rect.x + rect.width - textWidth - 8;
+    const labelY = rect.y + rect.height - textHeight - 8;
+
+    opacityLabel.position({ x: labelX, y: labelY });
+
+    if (bg) {
+        bg.position({ x: labelX - padding, y: labelY - padding });
+        bg.width(textWidth + padding * 2);
+        bg.height(textHeight + padding * 2);
+        bg.moveToTop();
+    }
+
+    opacityLabel.moveToTop();
+}
+
+function removeOpacityLabel() {
+    if (opacityLabel) {
+        // Remove background
+        const bg = imageLayer.children.find(c => c.getAttr('isOpacityBg'));
+        if (bg) bg.destroy();
+        opacityLabel.destroy();
+        opacityLabel = null;
     }
 }
 
@@ -646,6 +771,7 @@ function showContextMenu(x, y, node) {
     contextMenu.className = 'context-menu';
 
     const currentBlend = node.getAttr('blendMode') || 'source-over';
+    const currentOpacity = Math.round(node.opacity() * 100);
     const blendMenuItems = blendModes.map(m =>
         `<div class="context-menu-item blend-option${m.value === currentBlend ? ' active' : ''}" data-action="blend" data-blend="${m.value}">${m.label}</div>`
     ).join('');
@@ -657,6 +783,8 @@ function showContextMenu(x, y, node) {
         <div class="context-menu-item" data-action="fliph">Flip Horizontal <span class="shortcut">H</span></div>
         <div class="context-menu-item" data-action="flipv">Flip Vertical <span class="shortcut">V</span></div>
         <div class="context-menu-item" data-action="resetcrop">Reset Crop</div>
+        <div class="context-menu-separator"></div>
+        <div class="context-menu-label">Opacity: ${currentOpacity}% <span class="shortcut">0-9</span></div>
         <div class="context-menu-separator"></div>
         <div class="context-menu-label">Blend Mode <span class="shortcut">B</span></div>
         ${blendMenuItems}
@@ -873,6 +1001,7 @@ async function saveProject() {
                 rotation: img.rotation(),
                 cropBounds: img.getAttr('cropBounds') || { top: 0, right: 0, bottom: 0, left: 0 },
                 blendMode: img.getAttr('blendMode') || 'source-over',
+                opacity: img.opacity(),
                 originalWidth: img.getAttr('originalWidth'),
                 originalHeight: img.getAttr('originalHeight'),
                 name: img.name()
@@ -1003,6 +1132,9 @@ async function loadProject(file) {
                     konvaImage.setAttr('blendMode', blendMode);
                     konvaImage.globalCompositeOperation(blendMode);
 
+                    const opacity = imgData.opacity !== undefined ? imgData.opacity : 1;
+                    konvaImage.opacity(opacity);
+
                     setupImageHandlers(konvaImage);
 
                     imageLayer.add(konvaImage);
@@ -1041,6 +1173,7 @@ stage.on('click tap', (e) => {
     if (e.target === stage) {
         transformer.nodes([]);
         removeCropHandles();
+        removeOpacityLabel();
         imageLayer.batchDraw();
     }
 });
@@ -1094,6 +1227,14 @@ resetViewBtn.addEventListener('click', () => {
     zoomLevelSpan.textContent = '100%';
 });
 
+function toggleBackground() {
+    document.body.classList.toggle('light-bg');
+    const isLight = document.body.classList.contains('light-bg');
+    bgToggleBtn.textContent = isLight ? '⬜ Bg' : '⬛ Bg';
+}
+
+bgToggleBtn.addEventListener('click', toggleBackground);
+
 document.getElementById('flip-h-btn').addEventListener('click', flipHorizontal);
 document.getElementById('flip-v-btn').addEventListener('click', flipVertical);
 document.getElementById('rotate-l-btn').addEventListener('click', rotateLeft);
@@ -1145,6 +1286,20 @@ document.addEventListener('keydown', (e) => {
         e.preventDefault();
         exportCanvas();
         return;
+    }
+    if (e.key === 'x' || e.key === 'X') {
+        e.preventDefault();
+        toggleBackground();
+        return;
+    }
+
+    // Number keys for opacity (Photoshop-style)
+    if (e.key >= '0' && e.key <= '9' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (getSelectedImage()) {
+            e.preventDefault();
+            handleOpacityKey(parseInt(e.key));
+            return;
+        }
     }
 
     const node = getSelectedImage();

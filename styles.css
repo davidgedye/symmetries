@@ -14,6 +14,10 @@ body {
     overflow: hidden;
 }
 
+body.light-bg #canvas-wrapper {
+    background: #ffffff;
+}
+
 header {
     padding: 12px 20px;
     background: #2a2a2a;
@@ -57,6 +61,7 @@ button:hover {
     flex: 1;
     position: relative;
     overflow: hidden;
+    background: #1a1a1a;
 }
 
 #canvas-container {
