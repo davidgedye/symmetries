@@ -4,8 +4,6 @@ const container = document.getElementById('canvas-container');
 const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('file-input');
 const addBtn = document.getElementById('add-btn');
-const resetViewBtn = document.getElementById('reset-view-btn');
-const bgToggleBtn = document.getElementById('bg-toggle-btn');
 const zoomLevelSpan = document.getElementById('zoom-level');
 
 // Initialize Konva stage
@@ -1481,22 +1479,9 @@ transformer.on('transformend', updateCropHandles);
 addBtn.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
 
-resetViewBtn.addEventListener('click', () => {
-    stage.scale({ x: 1, y: 1 });
-    stage.position({ x: 0, y: 0 });
-    updateControlSizes();
-    updateCropHandles();
-    stage.batchDraw();
-    zoomLevelSpan.textContent = '100%';
-});
-
 function toggleBackground() {
     document.body.classList.toggle('light-bg');
-    const isLight = document.body.classList.contains('light-bg');
-    bgToggleBtn.textContent = isLight ? '⬜ Bg' : '⬛ Bg';
 }
-
-bgToggleBtn.addEventListener('click', toggleBackground);
 
 document.getElementById('flip-h-btn').addEventListener('click', flipHorizontal);
 document.getElementById('flip-v-btn').addEventListener('click', flipVertical);
