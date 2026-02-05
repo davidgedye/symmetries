@@ -51,9 +51,37 @@ let nudgeUndoTimeout = null;
 let nudgeUndoPushed = false;
 
 // Constants
-const HANDLE_SIZE = 12;
+const BASE_HANDLE_SIZE = 12;
+const BASE_ANCHOR_SIZE = 10;
 const HANDLE_COLOR = '#4285f4';
 const HANDLE_STROKE = '#fff';
+
+// Get handle size adjusted for current zoom level
+function getHandleSize() {
+    return BASE_HANDLE_SIZE / stage.scaleX();
+}
+
+function getAnchorSize() {
+    return BASE_ANCHOR_SIZE;
+}
+
+// Update transformer and crop handle sizes for current zoom
+function updateControlSizes() {
+    const anchorSize = getAnchorSize();
+    const handleSize = getHandleSize();
+
+    transformer.anchorSize(anchorSize);
+    transformer.anchorCornerRadius(anchorSize * 0.2);
+    transformer.borderStrokeWidth(1);
+
+    cropHandles.forEach(handle => {
+        const pos = handle.getAttr('handlePosition');
+        const isHorizontal = pos === 'top' || pos === 'bottom';
+        handle.width(isHorizontal ? handleSize * 2 : handleSize);
+        handle.height(isHorizontal ? handleSize : handleSize * 2);
+        handle.strokeWidth(1 / stage.scaleX());
+    });
+}
 
 const blendModes = [
     { value: 'source-over', label: 'Normal' },
@@ -417,11 +445,22 @@ function updateDropZoneVisibility() {
 // Image Transform Operations
 // ============================================
 
+// Check if image is rotated sideways (closer to 90°/270° than 0°/180°)
+function isRotatedSideways(node) {
+    const rot = Math.abs(node.rotation() % 180);
+    return rot > 45 && rot < 135;
+}
+
 function flipHorizontal() {
     const node = getSelectedImage();
     if (!node) return;
     pushUndo();
-    node.scaleX(node.scaleX() * -1);
+
+    if (isRotatedSideways(node)) {
+        node.scaleY(node.scaleY() * -1);
+    } else {
+        node.scaleX(node.scaleX() * -1);
+    }
     updateCropHandles();
     imageLayer.batchDraw();
 }
@@ -430,7 +469,12 @@ function flipVertical() {
     const node = getSelectedImage();
     if (!node) return;
     pushUndo();
-    node.scaleY(node.scaleY() * -1);
+
+    if (isRotatedSideways(node)) {
+        node.scaleX(node.scaleX() * -1);
+    } else {
+        node.scaleY(node.scaleY() * -1);
+    }
     updateCropHandles();
     imageLayer.batchDraw();
 }
@@ -588,15 +632,16 @@ function handleOpacityKey(digit) {
 function createCropHandles(node) {
     removeCropHandles();
     const nodeId = node._id;
+    const handleSize = getHandleSize();
 
     const handles = ['top', 'right', 'bottom', 'left'];
     handles.forEach(position => {
         const handle = new Konva.Rect({
-            width: position === 'top' || position === 'bottom' ? HANDLE_SIZE * 2 : HANDLE_SIZE,
-            height: position === 'left' || position === 'right' ? HANDLE_SIZE * 2 : HANDLE_SIZE,
+            width: position === 'top' || position === 'bottom' ? handleSize * 2 : handleSize,
+            height: position === 'left' || position === 'right' ? handleSize * 2 : handleSize,
             fill: HANDLE_COLOR,
             stroke: HANDLE_STROKE,
-            strokeWidth: 1,
+            strokeWidth: 1 / stage.scaleX(),
             cornerRadius: 2,
             draggable: true,
             name: `crop-handle-${position}`
@@ -655,24 +700,26 @@ function positionCropHandles(node) {
 
     cropHandles.forEach(handle => {
         const pos = handle.getAttr('handlePosition');
+        const hw = handle.width();
+        const hh = handle.height();
         let x, y;
 
         switch (pos) {
             case 'top':
-                x = rect.x + rect.width / 2 - (HANDLE_SIZE * 2) / 2;
-                y = rect.y - HANDLE_SIZE / 2;
+                x = rect.x + rect.width / 2 - hw / 2;
+                y = rect.y - hh / 2;
                 break;
             case 'bottom':
-                x = rect.x + rect.width / 2 - (HANDLE_SIZE * 2) / 2;
-                y = rect.y + rect.height - HANDLE_SIZE / 2;
+                x = rect.x + rect.width / 2 - hw / 2;
+                y = rect.y + rect.height - hh / 2;
                 break;
             case 'left':
-                x = rect.x - HANDLE_SIZE / 2;
-                y = rect.y + rect.height / 2 - (HANDLE_SIZE * 2) / 2;
+                x = rect.x - hw / 2;
+                y = rect.y + rect.height / 2 - hh / 2;
                 break;
             case 'right':
-                x = rect.x + rect.width - HANDLE_SIZE / 2;
-                y = rect.y + rect.height / 2 - (HANDLE_SIZE * 2) / 2;
+                x = rect.x + rect.width - hw / 2;
+                y = rect.y + rect.height / 2 - hh / 2;
                 break;
         }
 
@@ -723,20 +770,22 @@ function updateCropFromHandle(node, handle, visualPosition) {
     const rotation = node.rotation();
 
     const sourceEdge = getSourceEdge(visualPosition, rotation, scaleX, scaleY);
+    const hw = handle.width();
+    const hh = handle.height();
 
     let visualDelta;
     switch (visualPosition) {
         case 'top':
-            visualDelta = handlePos.y + HANDLE_SIZE / 2 - rect.y;
+            visualDelta = handlePos.y + hh / 2 - rect.y;
             break;
         case 'bottom':
-            visualDelta = rect.y + rect.height - handlePos.y - HANDLE_SIZE / 2;
+            visualDelta = rect.y + rect.height - handlePos.y - hh / 2;
             break;
         case 'left':
-            visualDelta = handlePos.x + HANDLE_SIZE / 2 - rect.x;
+            visualDelta = handlePos.x + hw / 2 - rect.x;
             break;
         case 'right':
-            visualDelta = rect.x + rect.width - handlePos.x - HANDLE_SIZE / 2;
+            visualDelta = rect.x + rect.width - handlePos.x - hw / 2;
             break;
     }
 
@@ -1410,6 +1459,7 @@ stage.on('wheel', (e) => {
         y: pointer.y - mousePointTo.y * newScale
     };
     stage.position(newPos);
+    updateControlSizes();
     updateCropHandles();
     stage.batchDraw();
 
@@ -1434,6 +1484,7 @@ fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
 resetViewBtn.addEventListener('click', () => {
     stage.scale({ x: 1, y: 1 });
     stage.position({ x: 0, y: 0 });
+    updateControlSizes();
     updateCropHandles();
     stage.batchDraw();
     zoomLevelSpan.textContent = '100%';
