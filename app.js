@@ -896,6 +896,7 @@ function exportCanvas() {
 
         ctx.save();
         ctx.globalCompositeOperation = blendMode;
+        ctx.globalAlpha = img.opacity();
         ctx.translate(exportX, exportY);
         ctx.rotate(rotation * Math.PI / 180);
         ctx.scale(scaleX < 0 ? -1 : 1, scaleY < 0 ? -1 : 1);
@@ -1305,23 +1306,25 @@ document.addEventListener('keydown', (e) => {
     const node = getSelectedImage();
     if (!node) return;
 
-    const moveAmount = e.shiftKey ? 10 : 1;
+    // Arrow: nudge 1 + snap | Shift+Arrow: nudge 1 no snap | Ctrl+Arrow: nudge 10 + snap
+    const moveAmount = e.ctrlKey ? 10 : 1;
+    const shouldSnap = !e.shiftKey;
 
     switch (e.key) {
         case 'ArrowLeft':
-            node.x(node.x() - moveAmount);
+            node.x(shouldSnap ? Math.round(node.x() - moveAmount) : node.x() - moveAmount);
             updateCropHandles();
             break;
         case 'ArrowRight':
-            node.x(node.x() + moveAmount);
+            node.x(shouldSnap ? Math.round(node.x() + moveAmount) : node.x() + moveAmount);
             updateCropHandles();
             break;
         case 'ArrowUp':
-            node.y(node.y() - moveAmount);
+            node.y(shouldSnap ? Math.round(node.y() - moveAmount) : node.y() - moveAmount);
             updateCropHandles();
             break;
         case 'ArrowDown':
-            node.y(node.y() + moveAmount);
+            node.y(shouldSnap ? Math.round(node.y() + moveAmount) : node.y() + moveAmount);
             updateCropHandles();
             break;
         case 'Delete':
