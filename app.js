@@ -47,6 +47,7 @@ const redoStack = [];
 const MAX_UNDO_LEVELS = 30;
 let nudgeUndoTimeout = null;
 let nudgeUndoPushed = false;
+let hasUnsavedChanges = false;
 
 // Constants
 const BASE_HANDLE_SIZE = 12;
@@ -245,6 +246,8 @@ function pushUndo() {
 
     // Clear redo stack on new action
     redoStack.length = 0;
+
+    hasUnsavedChanges = true;
 }
 
 function undo() {
@@ -257,6 +260,11 @@ function undo() {
     // Pop and restore previous state
     const previousState = undoStack.pop();
     restoreState(previousState);
+
+    // If undo stack is empty, no unsaved changes remain
+    if (undoStack.length === 0) {
+        hasUnsavedChanges = false;
+    }
 }
 
 function redo() {
@@ -1279,6 +1287,7 @@ async function saveProject() {
         link.click();
         URL.revokeObjectURL(link.href);
 
+        hasUnsavedChanges = false;
         setTimeout(hideProgressModal, 500);
 
     } catch (err) {
@@ -1521,6 +1530,14 @@ window.addEventListener('resize', () => {
     stage.width(wrapper.clientWidth);
     stage.height(wrapper.clientHeight);
     stage.batchDraw();
+});
+
+// Warn before leaving with unsaved changes
+window.addEventListener('beforeunload', (e) => {
+    if (hasUnsavedChanges) {
+        e.preventDefault();
+        return '';
+    }
 });
 
 // Keyboard shortcuts
