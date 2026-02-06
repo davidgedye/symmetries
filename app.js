@@ -1513,8 +1513,9 @@ function clearCanvas() {
     const images = imageLayer.children.filter(child => child instanceof Konva.Image);
     images.forEach(img => img.destroy());
 
-    // Clear selection
+    // Clear selection and crop handles
     transformer.nodes([]);
+    removeCropHandles();
 
     // Clear undo/redo stacks
     undoStack.length = 0;
