@@ -1111,7 +1111,18 @@ function exportCanvas() {
         maxY = Math.max(maxY, rect.y + rect.height);
     });
 
-    const exportScale = 2;
+    // Scale export so the lowest-resolution image renders at its native pixels
+    // (no image is over-scaled). For each image, native-to-screen ratio is
+    // 1 / (abs(scale) * stageZoom); the minimum across all images is the max
+    // exportScale that avoids upsampling any component.
+    const stageZoom = stage.scaleX();
+    let exportScale = Infinity;
+    images.forEach(img => {
+        const sx = 1 / (Math.abs(img.scaleX()) * stageZoom);
+        const sy = 1 / (Math.abs(img.scaleY()) * stageZoom);
+        exportScale = Math.min(exportScale, sx, sy);
+    });
+    exportScale = Math.max(exportScale, 1); // never downscale below screen res
 
     // It's hard to get a perfect edge with scaled images. Taking a few pixels
     // off ensures that there should be no white background lines.
@@ -1134,7 +1145,6 @@ function exportCanvas() {
     ctx.fillRect(0, 0, exportWidth, exportHeight);
 
     const sortedImages = [...images].sort((a, b) => a.zIndex() - b.zIndex());
-    const stageZoom = stage.scaleX();
 
     sortedImages.forEach(img => {
         const originalImg = img.getAttr('originalImage') || img.image();
@@ -1178,7 +1188,7 @@ function exportCanvas() {
 
     const link = document.createElement('a');
     link.download = 'montage-export.jpg';
-    link.href = exportCanvas.toDataURL('image/jpeg', 0.92);
+    link.href = exportCanvas.toDataURL('image/jpeg', 0.9);
     link.click();
 }
 
@@ -1230,7 +1240,7 @@ async function serializeStateToZip(state) {
 
     for (let i = 0; i < state.images.length; i++) {
         const imgState = state.images[i];
-        const filename = `${i}.png`;
+        const filename = `${i}.jpg`;
 
         updateProgress(
             Math.round((i / state.images.length) * 80),
@@ -1241,9 +1251,11 @@ async function serializeStateToZip(state) {
         canvas.width = imgState.imageRef.width;
         canvas.height = imgState.imageRef.height;
         const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(imgState.imageRef, 0, 0);
 
-        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
         imgFolder.file(filename, blob);
 
         projectData.images.push({
