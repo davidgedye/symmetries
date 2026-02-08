@@ -954,16 +954,28 @@ function updateCropHandles() {
 
 function updateOpacityLabel(node) {
     const opacity = node.opacity();
+    const blendValue = node.getAttr('blendMode') || 'source-over';
+    const isNonNormalBlend = blendValue !== 'source-over';
+    const isNonFullOpacity = opacity < 0.999;
 
-    // Only show if opacity is not 100%
-    if (opacity >= 0.999) {
+    // Only show if something is non-default
+    if (!isNonNormalBlend && !isNonFullOpacity) {
         removeOpacityLabel();
         return;
     }
 
+    const blendLabel = blendModes.find(m => m.value === blendValue)?.label || 'Normal';
     const percent = Math.round(opacity * 100);
     const rect = node.getClientRect({ relativeTo: stage });
-    const text = percent + '% opacity';
+
+    let text;
+    if (isNonNormalBlend && isNonFullOpacity) {
+        text = `${blendLabel}: ${percent}%`;
+    } else if (isNonNormalBlend) {
+        text = blendLabel;
+    } else {
+        text = `${percent}% opacity`;
+    }
 
     if (!opacityLabel) {
         opacityLabel = new Konva.Text({
@@ -1131,25 +1143,19 @@ async function exportCanvas() {
     });
     exportScale = Math.max(exportScale, 1); // never downscale below screen res
 
-    // It's hard to get a perfect edge with scaled images. Taking a few pixels
-    // off ensures that there should be no white background lines.
-    const EDGE_CROP = 3; // pixels to crop from each edge of final export
-    const edgeCropStage = EDGE_CROP / exportScale;
-    minX += edgeCropStage;
-    minY += edgeCropStage;
-    maxX -= edgeCropStage;
-    maxY -= edgeCropStage;
-
     const exportWidth = Math.round((maxX - minX) * exportScale);
     const exportHeight = Math.round((maxY - minY) * exportScale);
 
-    const exportCanvas = document.createElement('canvas');
-    exportCanvas.width = exportWidth;
-    exportCanvas.height = exportHeight;
-    const ctx = exportCanvas.getContext('2d');
+    // Slight oversize per image (in export pixels) to avoid sub-pixel gaps
+    // at scaled image edges, without cropping the overall bounding box.
+    const BLEED = 2;
 
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, exportWidth, exportHeight);
+    // Composite all images onto a transparent canvas first so blend modes
+    // only interact with other images, not the white background.
+    const compCanvas = document.createElement('canvas');
+    compCanvas.width = exportWidth;
+    compCanvas.height = exportHeight;
+    const compCtx = compCanvas.getContext('2d');
 
     const sortedImages = [...images].sort((a, b) => a.zIndex() - b.zIndex());
 
@@ -1174,24 +1180,33 @@ async function exportCanvas() {
         const exportX = (centerX - minX) * exportScale;
         const exportY = (centerY - minY) * exportScale;
 
-        const drawWidth = cropW * absScaleX * stageZoom * exportScale;
-        const drawHeight = cropH * absScaleY * stageZoom * exportScale;
+        const drawWidth = cropW * absScaleX * stageZoom * exportScale + BLEED;
+        const drawHeight = cropH * absScaleY * stageZoom * exportScale + BLEED;
 
-        ctx.save();
-        ctx.globalCompositeOperation = blendMode;
-        ctx.globalAlpha = img.opacity();
-        ctx.translate(exportX, exportY);
-        ctx.rotate(rotation * Math.PI / 180);
-        ctx.scale(scaleX < 0 ? -1 : 1, scaleY < 0 ? -1 : 1);
+        compCtx.save();
+        compCtx.globalCompositeOperation = blendMode;
+        compCtx.globalAlpha = img.opacity();
+        compCtx.translate(exportX, exportY);
+        compCtx.rotate(rotation * Math.PI / 180);
+        compCtx.scale(scaleX < 0 ? -1 : 1, scaleY < 0 ? -1 : 1);
 
-        ctx.drawImage(
+        compCtx.drawImage(
             originalImg,
             cropX, cropY, cropW, cropH,
             -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight
         );
 
-        ctx.restore();
+        compCtx.restore();
     });
+
+    // Flatten onto white background for JPG export
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = exportWidth;
+    exportCanvas.height = exportHeight;
+    const ctx = exportCanvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, exportWidth, exportHeight);
+    ctx.drawImage(compCanvas, 0, 0);
 
     try {
         const fileHandle = await window.showSaveFilePicker({
