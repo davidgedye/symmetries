@@ -149,6 +149,11 @@ button:hover {
     white-space: nowrap;
 }
 
+.instructions .version {
+    margin-left: auto;
+    color: #555;
+}
+
 .context-menu {
     position: fixed;
     background: #2a2a2a;
